@@ -599,7 +599,8 @@
     requestAnimationFrame(tick);
   }
 
-  $('demo').addEventListener('click', () => state.demo ? stopDemo() : startDemo());
+  const demoBtn = $('demo');
+  if (demoBtn) demoBtn.addEventListener('click', () => state.demo ? stopDemo() : startDemo());
   requestAnimationFrame(tick);
 })();
 </script>
