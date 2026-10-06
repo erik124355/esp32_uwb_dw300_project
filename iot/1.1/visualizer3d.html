@@ -125,6 +125,9 @@
     <input id="wsaddr" type="text" value="192.168.4.1" aria-label="Tag address">
     <button id="wifi" class="ghost">Connect WiFi</button>
   </div>
+  <div class="row">
+    <button id="demo" class="ghost">Demo</button>
+  </div>
   <div class="status"><span class="dot" id="dot"></span><span id="status">Not connected</span></div>
   <div id="warn">Web Serial isn't available in this browser. Open this file in Chrome or Edge.</div>
 
@@ -596,9 +599,7 @@
     requestAnimationFrame(tick);
   }
 
-  $('connect').addEventListener('click', connect);
   $('demo').addEventListener('click', () => state.demo ? stopDemo() : startDemo());
-  if (!('serial' in navigator)) $('warn').style.display = 'block';
   requestAnimationFrame(tick);
 })();
 </script>
