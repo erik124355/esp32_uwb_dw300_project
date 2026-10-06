@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UWB 3D Fall Monitor</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap">
+<style>
+  :root {
+    --paper:#E9EDEB; --panel:#F6F8F7; --ink:#16262B; --muted:#5B6C70; --grid:#CBD4D2;
+    --a1:#1B5FA8; --a2:#D9822B; --a3:#2E8B6A; --a4:#7A4FB3; --tag:#B8254B;
+    --ok:#2E7D4F; --alert:#C62828; --alertbg:#FBE4E4;
+    --font:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+    --mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper:#12191B; --panel:#1A2427; --ink:#E4ECEA; --muted:#90A2A6; --grid:#2A383B;
+      --a1:#5AA2EA; --a2:#F0A050; --a3:#5CC9A0; --a4:#B294E8; --tag:#F0688A;
+      --ok:#63C68B; --alert:#FF6B6B; --alertbg:#3A1E1E;
+    }
+  }
+  * { box-sizing:border-box; }
+  html,body { height:100%; margin:0; }
+  body { background:var(--paper); color:var(--ink); font-family:var(--font);
+         display:grid; grid-template-columns:1fr 370px; min-height:100vh; }
+  main { display:grid; grid-template-columns:1fr 1fr; grid-template-rows:1.35fr 1fr; gap:1px;
+         background:var(--grid); min-height:70vh; }
+  .pane { position:relative; background:var(--paper); min-height:180px; }
+  .pane.top { grid-column:1 / 3; }
+  .pane canvas { position:absolute; inset:0; width:100%; height:100%; display:block; }
+  .pane .lab { position:absolute; left:12px; top:8px; font-size:12px; color:var(--muted); }
+  aside { background:var(--panel); border-left:1px solid var(--grid); padding:20px; display:flex;
+          flex-direction:column; gap:18px; overflow-y:auto; }
+  h1 { font-size:18px; font-weight:600; margin:0; letter-spacing:-0.01em; }
+  .sub { color:var(--muted); font-size:13px; margin:4px 0 0; line-height:1.4; }
+  #alert { border-left:4px solid var(--ok); background:var(--paper); padding:12px 14px; }
+  #alert.on { border-color:var(--alert); background:var(--alertbg); }
+  #alert .t { font-size:16px; font-weight:600; }
+  #alert.on .t { color:var(--alert); }
+  #alert .s { font-size:13px; color:var(--muted); margin-top:2px; }
+  #alert button { margin-top:10px; display:none; }
+  #alert.on button { display:block; }
+  .height { display:flex; align-items:baseline; gap:8px; }
+  .height .v { font:500 40px var(--mono); font-variant-numeric:tabular-nums; }
+  .height .u { color:var(--muted); font-size:14px; }
+  .pos { font:13px var(--mono); color:var(--muted); line-height:1.6; }
+  .reads { display:grid; gap:6px; }
+  .read { display:flex; align-items:baseline; gap:10px; padding:7px 12px; border-left:4px solid var(--c); background:var(--paper); }
+  .read .name { font-size:13px; color:var(--muted); flex:1; }
+  .read .val { font:500 20px var(--mono); font-variant-numeric:tabular-nums; }
+  .read .unit { font-size:12px; color:var(--muted); }
+  .read.stale .val { opacity:.3; }
+  .arow { display:grid; grid-template-columns:26px 1fr 1fr 1fr; gap:6px; align-items:center; margin-bottom:6px; font-size:13px; }
+  .arow.head { color:var(--muted); font-size:12px; margin-bottom:4px; }
+  .sw { width:10px; height:10px; background:var(--c); display:inline-block; margin-right:4px; }
+  input[type=number], input[type=text] { width:100%; font:500 14px var(--mono); padding:6px 8px; color:var(--ink);
+     background:var(--paper); border:1px solid var(--grid); border-radius:4px; }
+  label { display:block; font-size:13px; color:var(--muted); margin-bottom:6px; }
+  .two { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .row { display:flex; gap:8px; }
+  button { font:500 14px var(--font); padding:10px 14px; border-radius:4px; cursor:pointer;
+           border:1px solid var(--ink); background:var(--ink); color:var(--paper); flex:1; }
+  button.ghost { background:transparent; color:var(--ink); }
+  button:focus-visible, input:focus-visible { outline:3px solid var(--a1); outline-offset:2px; }
+  .status { font-size:13px; display:flex; align-items:center; gap:8px; }
+  .dot { width:9px; height:9px; border-radius:50%; background:var(--muted); }
+  .dot.live { background:var(--ok); }
+  .note { font-size:12px; color:var(--muted); line-height:1.5; }
+  #geo { display:none; border-left:4px solid var(--alert); background:var(--alertbg); padding:10px 12px; font-size:13px; line-height:1.45; }
+  #warn { color:var(--tag); font-size:13px; display:none; }
+  @media (max-width:900px) {
+    body { grid-template-columns:1fr; }
+    main { grid-template-rows:60vh 40vh; }
+    aside { border-left:0; border-top:1px solid var(--grid); }
+  }
+</style>
+</head>
+<body>
+<main>
+  <section class="pane top"><canvas id="cTop" aria-label="Top-down view"></canvas><span class="lab">Top view (x, y)</span></section>
+  <section class="pane"><canvas id="cSide" aria-label="Side view"></canvas><span class="lab">Side view (x, height)</span></section>
+  <section class="pane"><canvas id="cChart" aria-label="Height over time"></canvas><span class="lab">Height, last 30 seconds</span></section>
+</main>
+
+<aside>
+  <div>
+    <h1>UWB fall monitor</h1>
+    <p class="sub">Four anchors, one tag. Position in 3D from the distances the tag reports.</p>
+  </div>
+
+  <div id="alert" role="status" aria-live="polite">
+    <div class="t" id="alertT">No fall detected</div>
+    <div class="s" id="alertS">Waiting for a position fix</div>
+    <button id="ack">Acknowledge</button>
+  </div>
+
+  <div>
+    <div class="height"><span class="v" id="hv">–</span><span class="u">m high</span></div>
+    <div class="pos" id="pos">x –, y –</div>
+  </div>
+
+  <div class="reads" id="reads"></div>
+
+  <div id="geo"></div>
+
+  <div>
+    <label>Anchor positions (metres from the corner of the floor)</label>
+    <div class="arow head"><span></span><span>x</span><span>y</span><span>height</span></div>
+    <div id="cfg"></div>
+  </div>
+
+  <div class="two">
+    <div>
+      <label for="th">Fall alert: height below (m)</label>
+      <input id="th" type="number" min="0.1" max="1.5" step="0.05" value="0.4">
+    </div>
+    <div>
+      <label for="ceil">Ceiling height (m)</label>
+      <input id="ceil" type="number" min="1" max="10" step="0.1" value="2.6">
+    </div>
+  </div>
+
+  <div class="row">
+    <input id="wsaddr" type="text" value="192.168.4.1" aria-label="Tag address">
+    <button id="wifi" class="ghost">Connect WiFi</button>
+  </div>
+  <div class="status"><span class="dot" id="dot"></span><span id="status">Not connected</span></div>
+  <div id="warn">Web Serial isn't available in this browser. Open this file in Chrome or Edge.</div>
+
+  <p class="note">
+    A position is only shown while all four anchors are answering. The tag is assumed to be
+    between the floor and the ceiling height above, which rules out the mirrored solution.
+    Height from UWB is less exact than the floor position, so expect errors of 20 to 50 cm.
+  </p>
+</aside>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  const median = a => { const s = [...a].sort((x, y) => x - y); return s[Math.floor(s.length / 2)]; };
+
+  // ---------- setup ----------
+  const N = 4;   // number of anchors (must match NUM_ANCHORS in tag.ino)
+  const CV = ['--a1', '--a2', '--a3', '--a4'];
+  const DEF = [[0,0,2.2],[4,0,0.5],[4,3,2.2],[0,3,0.5]];
+  let anchors = Array.from({length:N}, (_, i) => (DEF[i] || [i, 0, 1]).slice());
+  try {
+    const s = JSON.parse(localStorage.getItem('uwb-anchors3d'));
+    if (Array.isArray(s) && s.length === N) anchors = s;
+    const c = localStorage.getItem('uwb-ceil'); if (c) $('ceil').value = c;
+  } catch (e) {}
+  const save = () => {
+    try { localStorage.setItem('uwb-anchors3d', JSON.stringify(anchors)); localStorage.setItem('uwb-ceil', $('ceil').value); } catch (e) {}
+  };
+
+  for (let i = 0; i < N; i++) {
+    $('reads').insertAdjacentHTML('beforeend',
+      `<div class="read" id="r${i}" style="--c:var(${CV[i % 4]})"><span class="name">Anchor ${i+1}</span><span class="val" id="d${i}">–</span><span class="unit">m</span></div>`);
+    const inp = k => `<input type="number" step="0.1" value="${anchors[i][k]}" data-i="${i}" data-k="${k}" aria-label="Anchor ${i+1} ${['x','y','height'][k]}">`;
+    $('cfg').insertAdjacentHTML('beforeend',
+      `<div class="arow"><span><span class="sw" style="--c:var(${CV[i % 4]})"></span>${i+1}</span>${inp(0)}${inp(1)}${inp(2)}</div>`);
+  }
+
+  const state = {
+    d: Array(N).fill(null), buf: Array.from({length:N}, () => []), last: Array(N).fill(0),
+    pos: null, live: false, rms: 0, trail: [], zHist: [], lastPush: 0, lastSolve: 0, dirty: false,
+    timeouts: 0, count: 0, rateStamp: performance.now(),
+    port: null, demo: false,
+    fall: { active: false, time: 0, reason: '' }, armed: true, below: null
+  };
+  const resetTrack = () => { state.pos = null; state.trail = []; state.zHist = []; };
+
+  $('cfg').addEventListener('input', e => {
+    const t = e.target; if (!t.dataset.i) return;
+    anchors[+t.dataset.i][+t.dataset.k] = parseFloat(t.value) || 0;
+    save(); resetTrack(); checkGeometry();
+  });
+  $('ceil').addEventListener('input', () => { save(); resetTrack(); });
+
+  // Warn when the anchors are (nearly) in one plane: height then has a mirror image.
+  function checkGeometry() {
+    const [a, b, c, d] = anchors;
+    const u = [b[0]-a[0], b[1]-a[1], b[2]-a[2]], v = [c[0]-a[0], c[1]-a[1], c[2]-a[2]], w = [d[0]-a[0], d[1]-a[1], d[2]-a[2]];
+    const det = u[0]*(v[1]*w[2]-v[2]*w[1]) - u[1]*(v[0]*w[2]-v[2]*w[0]) + u[2]*(v[0]*w[1]-v[1]*w[0]);
+    const vol = Math.abs(det) / 6;
+    const g = $('geo');
+    if (vol < 0.5) {
+      g.style.display = 'block';
+      g.textContent = 'The four anchors are almost in one flat plane, so the tag height can be mirrored (shown above or below it). Mount them at clearly different heights, and spread out in both directions, for example two high and two low on opposite corners.';
+    } else g.style.display = 'none';
+  }
+  checkGeometry();
+
+  // ---------- range filter: median of last 5, then light smoothing ----------
+  function pushRange(id, dist) {
+    const i = id - 1;
+    if (i < 0 || i >= N || !isFinite(dist) || dist < -0.5 || dist > 60) return;
+    dist = Math.max(0, dist);
+    const b = state.buf[i];
+    b.push(dist); if (b.length > 5) b.shift();
+    const m = median(b);
+    state.d[i] = state.d[i] == null ? m : state.d[i] + 0.35 * (m - state.d[i]);
+    state.last[i] = performance.now();
+    state.count++;
+    state.dirty = true;
+  }
+
+  // ---------- 3D multilateration (constrained Gauss-Newton) ----------
+  function solve3(A, b) {
+    const M = A.map((r, i) => [...r, b[i]]);
+    for (let c = 0; c < 3; c++) {
+      let p = c;
+      for (let r = c + 1; r < 3; r++) if (Math.abs(M[r][c]) > Math.abs(M[p][c])) p = r;
+      if (Math.abs(M[p][c]) < 1e-12) return null;
+      [M[c], M[p]] = [M[p], M[c]];
+      for (let r = c + 1; r < 3; r++) {
+        const f = M[r][c] / M[c][c];
+        for (let k = c; k < 4; k++) M[r][k] -= f * M[c][k];
+      }
+    }
+    const x = [0, 0, 0];
+    for (let r = 2; r >= 0; r--) {
+      let s = M[r][3];
+      for (let k = r + 1; k < 3; k++) s -= M[r][k] * x[k];
+      x[r] = s / M[r][r];
+    }
+    return x;
+  }
+
+  function gaussNewton(p0, idx, zMax) {
+    let p = p0.slice();
+    for (let it = 0; it < 40; it++) {
+      const A = [[0,0,0],[0,0,0],[0,0,0]], g = [0, 0, 0];
+      for (const i of idx) {
+        const a = anchors[i];
+        const dx = p[0]-a[0], dy = p[1]-a[1], dz = p[2]-a[2];
+        const r = Math.hypot(dx, dy, dz) || 1e-6;
+        const res = r - state.d[i], J = [dx/r, dy/r, dz/r];
+        for (let m = 0; m < 3; m++) { g[m] += J[m] * res; for (let n = 0; n < 3; n++) A[m][n] += J[m] * J[n]; }
+      }
+      for (let m = 0; m < 3; m++) A[m][m] += 1e-3;
+      const step = solve3(A, g);
+      if (!step) break;
+      p = p.map((v, k) => v - step[k]);
+      p[2] = Math.min(zMax, Math.max(0, p[2]));          // stay between floor and ceiling
+      if (Math.hypot(...step) < 1e-4) break;
+    }
+    if (!p.every(Number.isFinite)) return null;
+    let s2 = 0;
+    for (const i of idx) { const a = anchors[i]; s2 += (Math.hypot(p[0]-a[0], p[1]-a[1], p[2]-a[2]) - state.d[i]) ** 2; }
+    return { x: p[0], y: p[1], z: p[2], rms: Math.sqrt(s2 / idx.length) };
+  }
+
+  function locate(now) {
+    const idx = [];
+    for (let i = 0; i < N; i++) if (state.d[i] != null && now - state.last[i] < 1500) idx.push(i);
+    if (idx.length < 4) return null;
+    const zMax = Math.max(0.5, parseFloat($('ceil').value) || 2.6);
+    const cx = anchors.reduce((s, a) => s + a[0], 0) / N;
+    const cy = anchors.reduce((s, a) => s + a[1], 0) / N;
+    const prev = (state.pos && isFinite(state.pos.x + state.pos.y + state.pos.z)) ? state.pos : null;
+
+    const starts = [];
+    if (prev) starts.push([prev.x, prev.y, prev.z]);
+    starts.push([cx, cy, zMax * 0.35], [cx, cy, zMax * 0.8]);
+    const sols = starts.map(s => gaussNewton(s, idx, zMax)).filter(Boolean);
+    if (!sols.length) return null;
+
+    const best = Math.min(...sols.map(s => s.rms));
+    const good = sols.filter(s => s.rms <= best + 0.05);     // all about equally good fits
+    if (prev) good.sort((a, b) => Math.hypot(a.x-prev.x, a.y-prev.y, a.z-prev.z) - Math.hypot(b.x-prev.x, b.y-prev.y, b.z-prev.z));
+    else good.sort((a, b) => a.rms - b.rms);
+    return good[0];
+  }
+
+  // ---------- fall detection ----------
+  function checkFall(now) {
+    const th = parseFloat($('th').value) || 0.4;
+    const recent = state.zHist.filter(h => now - h.t <= 1000).map(h => h.z);
+    if (recent.length < 4) return;
+    const zNow = median(recent);
+    if (!state.armed) { if (zNow > th + 0.3) state.armed = true; return; }
+    if (state.fall.active) return;
+    const older = state.zHist.filter(h => now - h.t > 1000 && now - h.t <= 3000).map(h => h.z);
+    const zBefore = older.length >= 4 ? median(older) : null;
+    if (zNow < th) { if (state.below == null) state.below = now; } else state.below = null;
+    let reason = null;
+    if (zBefore != null && zBefore - zNow >= 0.6 && zNow < 0.7)
+      reason = `Height dropped from ${zBefore.toFixed(1)} m to ${zNow.toFixed(1)} m`;
+    else if (state.below != null && now - state.below >= 2500)
+      reason = `Tag has stayed below ${th.toFixed(2)} m`;
+    if (reason) { state.fall = { active: true, time: now, reason }; beep(); }
+  }
+  function beep() {
+    try {
+      const ac = new (window.AudioContext || window.webkitAudioContext)();
+      const o = ac.createOscillator(), g = ac.createGain();
+      o.frequency.value = 880; g.gain.value = 0.15; o.connect(g); g.connect(ac.destination);
+      o.start(); o.stop(ac.currentTime + 0.4);
+    } catch (e) {}
+  }
+  $('ack').addEventListener('click', () => {
+    state.fall = { active: false, time: 0, reason: '' };
+    state.armed = false; state.below = null;
+  });
+
+  // ---------- serial ----------
+  function handleLine(line) {
+    const p = line.trim().split(',');
+    if (p[0] === 'R' && p.length === 3) pushRange(parseInt(p[1]), parseFloat(p[2]));
+    else if (p[0] === 'T') state.timeouts++;
+  }
+  function setStatus(live, text) { $('dot').classList.toggle('live', live); $('status').textContent = text; }
+
+  async function connect() {
+    if (state.port) return disconnect();
+    if (!('serial' in navigator)) { $('warn').style.display = 'block'; return; }
+    try {
+      stopDemo();
+      state.port = await navigator.serial.requestPort();
+      await state.port.open({ baudRate: 115200 });
+      setStatus(true, 'Connected to tag');
+      $('connect').textContent = 'Disconnect';
+      readLoop(state.port);
+    } catch (e) { state.port = null; setStatus(false, 'Could not open port: ' + e.message); }
+  }
+  async function readLoop(port) {
+    const dec = new TextDecoderStream();
+    const closed = port.readable.pipeTo(dec.writable).catch(() => {});
+    const reader = dec.readable.getReader();
+    let buf = '';
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += value;
+        let nl;
+        while ((nl = buf.indexOf('\n')) >= 0) { handleLine(buf.slice(0, nl)); buf = buf.slice(nl + 1); }
+      }
+    } catch (e) {} finally { reader.releaseLock(); }
+    await closed;
+    if (state.port === port) { try { await port.close(); } catch (e) {} state.port = null; }
+    $('connect').textContent = 'Connect tag'; setStatus(false, 'Disconnected');
+  }
+  async function disconnect() {
+    const port = state.port; state.port = null;
+    try { await port.readable.cancel(); } catch (e) {}
+    try { await port.close(); } catch (e) {}
+    $('connect').textContent = 'Connect tag'; setStatus(false, 'Disconnected');
+  }
+
+  // ---------- Wi-Fi (WebSocket) ----------
+  let ws = null, wsWant = false;
+  function openWs() {
+    const host = $('wsaddr').value.trim();
+    setStatus(false, 'Connecting to ' + host + '...');
+    ws = new WebSocket('ws://' + host + ':81');
+    ws.onopen = () => { setStatus(true, 'Connected over Wi-Fi'); $('wifi').textContent = 'Disconnect WiFi'; };
+    ws.onmessage = e => handleLine(String(e.data));
+    ws.onerror = () => {};
+    ws.onclose = () => {
+      ws = null;
+      if (wsWant) {
+        setStatus(false, 'Wi-Fi lost, retrying...');
+        setTimeout(() => { if (wsWant && !ws) openWs(); }, 1500);
+      } else { $('wifi').textContent = 'Connect WiFi'; setStatus(false, 'Disconnected'); }
+    };
+  }
+  function toggleWifi() {
+    if (wsWant) { wsWant = false; if (ws) ws.close(); else { $('wifi').textContent = 'Connect WiFi'; setStatus(false, 'Disconnected'); } return; }
+    stopDemo(); if (state.port) disconnect();
+    wsWant = true; openWs();
+  }
+  $('wifi').addEventListener('click', toggleWifi);
+
+  // ---------- demo: walks around, falls every 20 s ----------
+  let demoTimer = null, demoT0 = 0;
+  function startDemo() {
+    if (state.port) disconnect();
+    state.demo = true; state.d.fill(null); state.buf.forEach(b => b.length = 0); resetTrack();
+    $('demo').textContent = 'Stop demo'; setStatus(true, 'Demo: simulated tag, falls every 20 s');
+    demoT0 = performance.now();
+    demoTimer = setInterval(() => {
+      const t = (performance.now() - demoT0) / 1000, c = t % 20;
+      const xs = anchors.map(a => a[0]), ys = anchors.map(a => a[1]);
+      const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+      const x = cx + 0.4 * (Math.max(...xs) - Math.min(...xs)) * Math.sin(t * 0.4);
+      const y = cy + 0.4 * (Math.max(...ys) - Math.min(...ys)) * Math.sin(t * 0.55);
+      let z = 1.0 + 0.03 * Math.sin(t * 6);
+      if (c >= 8 && c < 8.5) z = 1.0 - 0.85 * (c - 8) / 0.5;
+      else if (c >= 8.5 && c < 13) z = 0.15;
+      else if (c >= 13 && c < 15) z = 0.15 + 0.85 * (c - 13) / 2;
+      const n = () => (Math.random() - 0.5) * 0.08;
+      anchors.forEach((a, i) => pushRange(i + 1, Math.hypot(x - a[0], y - a[1], z - a[2]) + n()));
+    }, 70);
+  }
+  function stopDemo() {
+    if (!state.demo) return;
+    clearInterval(demoTimer); state.demo = false;
+    $('demo').textContent = 'Demo'; setStatus(false, 'Not connected');
+  }
+
+  // ---------- drawing helpers ----------
+  function prep(c) {
+    const r = c.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+    if (c.width !== Math.round(r.width * dpr) || c.height !== Math.round(r.height * dpr)) {
+      c.width = Math.round(r.width * dpr); c.height = Math.round(r.height * dpr);
+    }
+    const ctx = c.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, r.width, r.height);
+    return { ctx, W: r.width, H: r.height };
+  }
+  function fit(x0, x1, y0, y1, W, H, pad) {
+    const sc = Math.min((W - 2 * pad) / (x1 - x0), (H - 2 * pad) / (y1 - y0));
+    const ox = W / 2 - (x0 + x1) / 2 * sc, oy = H / 2 + (y0 + y1) / 2 * sc;
+    return { sc, X: x => ox + x * sc, Y: y => oy - y * sc };
+  }
+  function niceStep(span) {
+    const raw = span / 6, pow = Math.pow(10, Math.floor(Math.log10(raw))), f = raw / pow;
+    return (f < 1.5 ? 1 : f < 3.5 ? 2 : f < 7.5 ? 5 : 10) * pow;
+  }
+  function grid(ctx, f, x0, x1, y0, y1, C) {
+    const step = niceStep(Math.max(x1 - x0, y1 - y0));
+    ctx.lineWidth = 1; ctx.font = '11px ' + C.mono;
+    for (let x = Math.ceil(x0 / step) * step; x <= x1; x += step) {
+      ctx.strokeStyle = C.grid; ctx.beginPath(); ctx.moveTo(f.X(x), f.Y(y0)); ctx.lineTo(f.X(x), f.Y(y1)); ctx.stroke();
+      ctx.fillStyle = C.muted; ctx.fillText(x.toFixed(step < 1 ? 1 : 0), f.X(x) + 3, f.Y(y0) - 4);
+    }
+    for (let y = Math.ceil(y0 / step) * step; y <= y1; y += step) {
+      ctx.strokeStyle = C.grid; ctx.beginPath(); ctx.moveTo(f.X(x0), f.Y(y)); ctx.lineTo(f.X(x1), f.Y(y)); ctx.stroke();
+      ctx.fillStyle = C.muted; ctx.fillText(y.toFixed(step < 1 ? 1 : 0), f.X(x0) + 4, f.Y(y) - 3);
+    }
+  }
+  function sq(ctx, x, y, color, label, C, dy) {
+    ctx.fillStyle = color; ctx.fillRect(x - 7, y - 7, 14, 14);
+    ctx.fillStyle = C.ink; ctx.font = '600 12px ' + C.font; ctx.fillText(label, x + 11, y + (dy || 4));
+  }
+  function tagDot(ctx, x, y, C, now) {
+    ctx.globalAlpha = state.live ? 1 : 0.3;
+    if (state.fall.active && state.live) {
+      ctx.strokeStyle = C.alert; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(x, y, 14 + 4 * Math.sin(now / 150), 0, 7); ctx.stroke();
+    }
+    ctx.fillStyle = C.tag; ctx.beginPath(); ctx.arc(x, y, 8, 0, 7); ctx.fill();
+    ctx.strokeStyle = C.panel; ctx.lineWidth = 2; ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+
+  function drawTop(C, now) {
+    const { ctx, W, H } = prep($('cTop'));
+    const xs = anchors.map(a => a[0]), ys = anchors.map(a => a[1]);
+    let x0 = Math.min(...xs) - 0.8, x1 = Math.max(...xs) + 0.8, y0 = Math.min(...ys) - 0.8, y1 = Math.max(...ys) + 0.8;
+    const p = state.pos;
+    if (p) { x0 = Math.min(x0, p.x - 0.3); x1 = Math.max(x1, p.x + 0.3); y0 = Math.min(y0, p.y - 0.3); y1 = Math.max(y1, p.y + 0.3); }
+    const f = fit(x0, x1, y0, y1, W, H, 34);
+    grid(ctx, f, x0, x1, y0, y1, C);
+    ctx.setLineDash([6, 6]); ctx.strokeStyle = C.muted; ctx.lineWidth = 1;
+    ctx.strokeRect(f.X(Math.min(...xs)), f.Y(Math.max(...ys)), (Math.max(...xs) - Math.min(...xs)) * f.sc, (Math.max(...ys) - Math.min(...ys)) * f.sc);
+    ctx.setLineDash([]);
+    if (p) {
+      anchors.forEach((a, i) => {
+        if (state.d[i] == null) return;
+        ctx.strokeStyle = C.a[i % 4]; ctx.globalAlpha = state.live ? 0.45 : 0.15; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.moveTo(f.X(a[0]), f.Y(a[1])); ctx.lineTo(f.X(p.x), f.Y(p.y)); ctx.stroke();
+      });
+      ctx.globalAlpha = 1;
+      for (let i = 1; i < state.trail.length; i++) {
+        ctx.strokeStyle = C.tag; ctx.globalAlpha = i / state.trail.length * 0.5; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(f.X(state.trail[i-1].x), f.Y(state.trail[i-1].y)); ctx.lineTo(f.X(state.trail[i].x), f.Y(state.trail[i].y)); ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+    }
+    anchors.forEach((a, i) => sq(ctx, f.X(a[0]), f.Y(a[1]), C.a[i % 4], `A${i+1} (${a[2].toFixed(1)} m high)`, C));
+    if (p) tagDot(ctx, f.X(p.x), f.Y(p.y), C, now);
+    else { ctx.fillStyle = C.muted; ctx.font = '15px ' + C.font; ctx.textAlign = 'center';
+           ctx.fillText('Waiting for all 4 anchors. Connect the tag or try Demo.', W / 2, H / 2); ctx.textAlign = 'left'; }
+  }
+
+  function drawSide(C, now) {
+    const { ctx, W, H } = prep($('cSide'));
+    const xs = anchors.map(a => a[0]), zs = anchors.map(a => a[2]);
+    const ceil = parseFloat($('ceil').value) || 2.6;
+    const x0 = Math.min(...xs) - 0.8, x1 = Math.max(...xs) + 0.8, y0 = -0.25, y1 = Math.max(Math.max(...zs), ceil) + 0.3;
+    const f = fit(x0, x1, y0, y1, W, H, 30);
+    grid(ctx, f, x0, x1, y0, y1, C);
+    ctx.fillStyle = C.grid; ctx.fillRect(0, f.Y(0), W, H - f.Y(0));
+    ctx.strokeStyle = C.ink; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(0, f.Y(0)); ctx.lineTo(W, f.Y(0)); ctx.stroke();
+    ctx.setLineDash([2, 5]); ctx.strokeStyle = C.muted; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(0, f.Y(ceil)); ctx.lineTo(W, f.Y(ceil)); ctx.stroke();
+    const th = parseFloat($('th').value) || 0.4;
+    ctx.setLineDash([5, 5]); ctx.strokeStyle = C.alert;
+    ctx.beginPath(); ctx.moveTo(0, f.Y(th)); ctx.lineTo(W, f.Y(th)); ctx.stroke(); ctx.setLineDash([]);
+    anchors.forEach((a, i) => sq(ctx, f.X(a[0]), f.Y(a[2]), C.a[i % 4], 'A' + (i + 1), C, -10));
+    const p = state.pos;
+    if (p) {
+      for (let i = 1; i < state.trail.length; i++) {
+        ctx.strokeStyle = C.tag; ctx.globalAlpha = i / state.trail.length * 0.5; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(f.X(state.trail[i-1].x), f.Y(state.trail[i-1].z)); ctx.lineTo(f.X(state.trail[i].x), f.Y(state.trail[i].z)); ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+      ctx.setLineDash([3, 4]); ctx.strokeStyle = C.tag; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(f.X(p.x), f.Y(p.z)); ctx.lineTo(f.X(p.x), f.Y(0)); ctx.stroke(); ctx.setLineDash([]);
+      tagDot(ctx, f.X(p.x), f.Y(p.z), C, now);
+      ctx.fillStyle = C.ink; ctx.font = '600 12px ' + C.font; ctx.fillText(p.z.toFixed(2) + ' m', f.X(p.x) + 14, f.Y(p.z) + 4);
+    }
+  }
+
+  function drawChart(C, now) {
+    const { ctx, W, H } = prep($('cChart'));
+    const zs = anchors.map(a => a[2]), zMax = Math.max(2.6, Math.max(...zs) + 0.2), span = 30000;
+    const L = 38, R = 10, T = 26, B = 22;
+    const X = t => L + (t - (now - span)) / span * (W - L - R), Y = z => H - B - z / zMax * (H - T - B);
+    ctx.font = '11px ' + C.mono; ctx.lineWidth = 1;
+    for (let z = 0; z <= zMax; z += 0.5) {
+      ctx.strokeStyle = C.grid; ctx.beginPath(); ctx.moveTo(L, Y(z)); ctx.lineTo(W - R, Y(z)); ctx.stroke();
+      ctx.fillStyle = C.muted; ctx.fillText(z.toFixed(1), 6, Y(z) + 4);
+    }
+    const th = parseFloat($('th').value) || 0.4;
+    ctx.setLineDash([5, 5]); ctx.strokeStyle = C.alert;
+    ctx.beginPath(); ctx.moveTo(L, Y(th)); ctx.lineTo(W - R, Y(th)); ctx.stroke(); ctx.setLineDash([]);
+    ctx.strokeStyle = C.tag; ctx.lineWidth = 2; ctx.beginPath();
+    let started = false;
+    for (const h of state.zHist) {
+      if (now - h.t > span) continue;
+      if (!started) { ctx.moveTo(X(h.t), Y(h.z)); started = true; } else ctx.lineTo(X(h.t), Y(h.z));
+    }
+    ctx.stroke();
+    if (state.fall.active && now - state.fall.time < span) {
+      ctx.strokeStyle = C.alert; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(X(state.fall.time), T); ctx.lineTo(X(state.fall.time), H - B); ctx.stroke();
+    }
+  }
+
+  // ---------- main loop ----------
+  function tick() {
+    const now = performance.now();
+    const C = { ink: css('--ink'), muted: css('--muted'), grid: css('--grid'), panel: css('--panel'),
+                tag: css('--tag'), alert: css('--alert'), font: css('--font'), mono: css('--mono'),
+                a: CV.map(css) };
+    if (now - state.rateStamp > 1000) {
+      const rate = state.count / ((now - state.rateStamp) / 1000);
+      state.count = 0; state.rateStamp = now;
+      if (state.port || (ws && ws.readyState === 1)) setStatus(true, `Live: ${rate.toFixed(0)} readings/s, ${state.timeouts} missed`);
+    }
+    for (let i = 0; i < N; i++) {
+      $('d' + i).textContent = state.d[i] == null ? '–' : state.d[i].toFixed(2);
+      $('r' + i).classList.toggle('stale', now - state.last[i] > 1500);
+    }
+
+    // Solve only when new readings arrived (max 20 times a second)
+    if (state.dirty && now - state.lastSolve >= 50) {
+      state.dirty = false; state.lastSolve = now;
+      const s = locate(now);
+      state.live = !!s;
+      if (s) {
+        const p = state.pos;
+        if (!p) state.pos = { x: s.x, y: s.y, z: s.z };
+        else {
+          // Adaptive smoothing: very steady when the tag is still, quick when it really moves
+          const dist = Math.hypot(s.x - p.x, s.y - p.y, s.z - p.z);
+          const a = Math.min(0.6, 0.05 + dist * 1.2);
+          state.pos = { x: p.x + (s.x - p.x) * a, y: p.y + (s.y - p.y) * a, z: p.z + (s.z - p.z) * a * 0.7 };
+        }
+        state.rms = s.rms;
+        if (now - state.lastPush > 100) {
+          state.lastPush = now;
+          state.zHist.push({ t: now, z: state.pos.z });
+          state.trail.push({ x: state.pos.x, y: state.pos.y, z: state.pos.z });
+          if (state.trail.length > 100) state.trail.shift();
+          while (state.zHist.length && now - state.zHist[0].t > 60000) state.zHist.shift();
+          checkFall(now);
+        }
+      }
+    }
+    if (state.live && !anchors.every((_, i) => now - state.last[i] < 1500)) state.live = false;
+
+    const p = state.pos;
+    $('hv').textContent = p ? p.z.toFixed(2) : '–';
+    $('pos').innerHTML = p ? `x ${p.x.toFixed(2)} m, y ${p.y.toFixed(2)} m<br>fit error ${(state.rms * 100).toFixed(0)} cm` : 'x –, y –';
+    const al = $('alert');
+    al.classList.toggle('on', state.fall.active);
+    if (state.fall.active) {
+      $('alertT').textContent = 'Possible fall';
+      $('alertS').textContent = `${state.fall.reason}, ${Math.round((now - state.fall.time) / 1000)} s ago`;
+    } else {
+      $('alertT').textContent = 'No fall detected';
+      $('alertS').textContent = p
+        ? (state.live ? 'Tracking the tag' : 'Position paused: fewer than 4 anchors answering')
+        : 'Waiting for a position fix';
+    }
+    drawTop(C, now); drawSide(C, now); drawChart(C, now);
+    requestAnimationFrame(tick);
+  }
+
+  $('connect').addEventListener('click', connect);
+  $('demo').addEventListener('click', () => state.demo ? stopDemo() : startDemo());
+  if (!('serial' in navigator)) $('warn').style.display = 'block';
+  requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>
